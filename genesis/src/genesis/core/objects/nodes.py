@@ -39,6 +39,7 @@ class StringNode(base_node.Node):
     def compute(self):
         if self.update.get():
             self.output.set(self.input.get(), force=True)
+            self.computed.emit()
 
 class FloatNode(base_node.Node):
     def __init__(self, name="float", value=0.0, parent=None):
@@ -64,6 +65,7 @@ class FloatNode(base_node.Node):
     def compute(self):
         if self.update.get():
             self.output.set(self.input.get(), force=True)
+            self.computed.emit()
 
 class IntegerNode(base_node.Node):
     def __init__(self, name="integer", value=0, parent=None):
@@ -89,6 +91,7 @@ class IntegerNode(base_node.Node):
     def compute(self):
         if self.update.get():
             self.output.set(self.input.get(), force=True)
+            self.computed.emit()
 
 class BooleanNode(base_node.Node):
     def __init__(self, name="boolean", value=False, parent=None):
@@ -114,22 +117,23 @@ class BooleanNode(base_node.Node):
     def compute(self):
         if self.update.get():
             self.output.set(self.input.get(), force=True)
+            self.computed.emit()
 
 class MathNode(base_node.Node):
     def __init__(self, name="math", value=0.0, parent=None):
         super().__init__(name, parent=parent)
         self._INPUTS = []
 
-        self._OUTPUT = attributes.Float(name="output", value=value, locked=True, hidden=True)
-        self.add_output(self.output)
-
         self._FUNCTION = attributes.Enum(name="function", value="add", options=["add", "subtract", "multiply", "divide", "average"])
         self.add_attribute(self.function)
 
-        self.add_input_attr()
-        self.add_input_attr()
+        self.add_input_attr(compute=False)
+        self.add_input_attr(compute=False)
 
         self.function.value_changed.connect(self.compute)
+
+        self._OUTPUT = attributes.Float(name="output", value=value, locked=True, hidden=True)
+        self.add_output(self.output)
 
         self.compute()
 
@@ -141,12 +145,13 @@ class MathNode(base_node.Node):
     def function(self):
         return self._FUNCTION
 
-    def add_input_attr(self, value=0.0):
+    def add_input_attr(self, value=0.0, compute=True):
         idx = len(self.inputs)
         attr = attributes.Float(name=f"input[{idx}]", value=value)
         self.add_input(attr)
         attr.value_changed.connect(self.compute)
-        self.compute()
+        if compute:
+            self.compute()
 
     def compute(self):
         if self.update.get():
@@ -159,23 +164,24 @@ class MathNode(base_node.Node):
 
             if self.function.get() == "subtract":
                 value = self.inputs[0].get()
-                for input_value in input_values:
+                for input_value in input_values[1:]:
                     value -= input_value
 
             if self.function.get() == "multiply":
                 value = self.inputs[0].get()
-                for input_value in input_values:
+                for input_value in input_values[1:]:
                     value *= input_value
 
             if self.function.get() == "divide":
                 value = self.inputs[0].get()
-                for input_value in input_values:
+                for input_value in input_values[1:]:
                     value /= input_value
 
             if self.function.get() == "average":
                 value = sum(input_values) / len(input_values)
 
             self.output.set(value, force=True)
+            self.computed.emit()
 
 class VectorNode(base_node.Node):
     def __init__(self, name="vector", parent=None):
@@ -231,6 +237,7 @@ class VectorNode(base_node.Node):
                 y = self.inputA.y.get() / self.inputB.y.get()
                 z = self.inputA.z.get() / self.inputB.z.get()
             self.output.set(x, y, z, force=True)
+            self.computed.emit()
 
 class ComparisonNode(base_node.Node):
     def __init__(self, name="comparison", parent=None):
@@ -294,6 +301,7 @@ class ComparisonNode(base_node.Node):
                 y = True if self.inputA.y.get() <= self.inputB.y.get() else False
                 z = True if self.inputA.z.get() <= self.inputB.z.get() else False
             self.output.set(x, y, z, force=True)
+            self.computed.emit()
 
 class BlendNode(base_node.Node):
     def __init__(self, name="blend", parent=None):
@@ -336,6 +344,7 @@ class BlendNode(base_node.Node):
             y = (self.inputA.y.get() + self.inputB.y.get()) / 2.0
             z = (self.inputA.z.get() + self.inputB.z.get()) / 2.0
             self.output.set(x, y, z, force=True)
+            self.computed.emit()
 
 class ScriptNode(base_node.Node):
     def __init__(self, name="script", value="", parent=None):
@@ -360,8 +369,12 @@ class ScriptNode(base_node.Node):
 
     def compute(self):
         if self.update.get():
-            exec(self.input.get())
-            self.output.set(self.input.get(), force=True)
+            try:
+                exec(self.input.get())
+                self.output.set(self.input.get(), force=True)
+                self.computed.emit()
+            except:
+                self.output.set("", force=True)
 
 class TransformNode(base_node.Node):
     def __init__(self, name="transform", parent=None):
@@ -410,5 +423,25 @@ class TransformNode(base_node.Node):
             rotate = [self.rotate.x.get(), self.rotate.y.get(), self.rotate.z.get()]
             scale = [self.scale.x.get(), self.scale.y.get(), self.scale.z.get()]
             self.output.set(translate, rotate, scale)
+            self.computed.emit()
 
 
+
+def get_nodes():
+    return {"group": GroupNode,
+            "string": StringNode,
+            "float": FloatNode,
+            "integer": IntegerNode,
+            "bool": BooleanNode,
+            "math": MathNode,
+            "vector": VectorNode,
+            "compare": ComparisonNode,
+            "blend": BlendNode,
+            "script": ScriptNode,
+            "transform": TransformNode}
+
+def create_node(node, name=""):
+    if name:
+        return get_nodes()[node](name=name)
+    else:
+        return get_nodes()[node]()

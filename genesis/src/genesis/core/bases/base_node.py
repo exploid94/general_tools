@@ -1,5 +1,6 @@
 from genesis.core.bases import base_object
 from genesis.core.objects import attributes
+from genesis.core import signal
 
 import importlib
 importlib.reload(attributes)
@@ -15,6 +16,11 @@ class Node(base_object.BaseObject):
 
         self._UPDATE = attributes.Bool(name="update", value=update)
         self.add_attribute(self._UPDATE)
+        self.update.value_changed.connect(self.compute)
+
+        self._SIGNAL_COMPUTED = signal.Signal()
+
+        self._WIDGET = None
 
     @property
     def name(self):
@@ -31,6 +37,10 @@ class Node(base_object.BaseObject):
     @property
     def outputs(self):
         return self._OUTPUTS
+
+    @property
+    def computed(self):
+        return self._SIGNAL_COMPUTED
 
     def add_input(self, attr):
         self._INPUTS.append(attr)

@@ -15,7 +15,6 @@ class BaseAttribute(base_object.BaseObject):
         parent (object): The parent of the attribute.
         locked (bool): If True, the attribute cannot be set, unless you use force=True.
         hidden (bool): The attribute hidden state.
-        inherit (bool): If True, the value will inherit it's parent value.
         hint (str) (optional): A description of the attribute.
         _set (bool) (optional): If False, the value won't be set during initialization.
 
@@ -32,6 +31,8 @@ class BaseAttribute(base_object.BaseObject):
         self._LOCKED = locked
         self._HIDDEN = hidden
         self._HINT = hint
+        self._CONNECTED_SIGNAL = None
+        self._CONNECTED_ATTRIBUTE = None
 
         self._SIGNAL_NAME_CHANGED = signal.Signal()
         self._SIGNAL_VALUE_CHANGED = signal.Signal()
@@ -150,6 +151,14 @@ class BaseAttribute(base_object.BaseObject):
         """signal.PublishSignal: default_value_changed.emit(value)."""
         return self._SIGNAL_DEFAULT_VALUE_CHANGED
 
+    @property
+    def connected_signal(self):
+        return self._CONNECTED_SIGNAL
+
+    @property
+    def connected_attribute(self):
+        return self._CONNECTED_ATTRIBUTE
+
     def rename(self, name):
         """Renames the attribute to the name given.
 
@@ -183,7 +192,7 @@ class BaseAttribute(base_object.BaseObject):
         Returns:
             attribute: The attribute
         """
-        if self.locked and not force and not self.inherited:
+        if self.locked and not force:
             logger.exception(f'[attribute.{self.name}] Cannot edit locked attribute!')
 
         if (self.data_type is any) or isinstance(value, self.data_type):
@@ -314,3 +323,19 @@ class BaseAttribute(base_object.BaseObject):
         else:
             self._IS_OVERRIDDEN = True
         self.is_overridden_changed.emit(is_overridden=self.is_overridden)
+
+    def connect(self, attribute):
+        """Connects another attribute to this attributes value"""
+        self.disconnect()
+        self.set(attribute.value, force=True)
+        self._CONNECTED_SIGNAL = attribute.value_changed.connect(lambda: self.set(attribute.value, force=True))
+        self._CONNECTED_ATTRIBUTE = attribute
+        self.lock()
+
+    def disconnect(self):
+        """Connects another attribute to this attributes value"""
+        if self.connected_signal:
+            self.connected_attribute.value_changed.disconnect(self.connected_signal)
+            self._CONNECTED_ATTRIBUTE = None
+            self._CONNECTED_SIGNAL = None
+            self.unlock()

@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 
+from genesis.core.objects import nodes
 
 class GraphicsScene(QGraphicsScene):
     def __init__(self, scene, parent=None):
@@ -51,10 +52,12 @@ class GraphicsScene(QGraphicsScene):
             else:
                 lines_dark.append(QLine(left, y, right, y))
 
-        painter.setPen(self._pen_light)
-        painter.drawLines(*lines_light)
-        painter.setPen(self._pen_dark)
-        painter.drawLines(*lines_dark)
+        if lines_light:
+            painter.setPen(self._pen_light)
+            painter.drawLines(*lines_light)
+        if lines_dark:
+            painter.setPen(self._pen_dark)
+            painter.drawLines(*lines_dark)
 
 class GraphicsView(QGraphicsView):
     MODE_NONE = 0
@@ -84,6 +87,25 @@ class GraphicsView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+
+        self.setDragMode(QGraphicsView.RubberBandDrag)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete:
+            self.delete_selected()
+        if event.key() == Qt.Key_Tab:
+            NodeSearch(self.pos_x, self.pos_y, self.graphics_scene.scene, parent=self)
+        else:
+            super().keyPressEvent(event)
+
+    def delete_selected(self):
+        selected_edges = [i for i in self.graphics_scene.selectedItems() if isinstance(i, GraphicsEdge)]
+        selected_nodes = [i for i in self.graphics_scene.selectedItems() if isinstance(i, GraphicsNode)]
+        for item in (selected_edges + selected_nodes):
+            if isinstance(item, GraphicsEdge):
+                item.edge.remove()
+            elif isinstance(item, GraphicsNode):
+                item.node_widget.remove()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MiddleButton:
@@ -126,7 +148,7 @@ class GraphicsView(QGraphicsView):
             if self.mode == self.MODE_NONE:
                 self.mode = self.MODE_EDGE_DRAG
                 self.held_click_item = item
-                self.temp_edge = EdgeWidget(self.graphics_scene.scene, self.held_click_item.socket_widget, None)
+                self.temp_edge = EdgeWidget(self.graphics_scene.scene, self.held_click_item.socket_widget, None, is_temp=True)
                 return
 
         if self.mode == self.MODE_EDGE_DRAG:
@@ -145,13 +167,17 @@ class GraphicsView(QGraphicsView):
                 self.temp_edge.remove()
             if type(item) is GraphicsSocket:
                 if self.held_click_item and (self.held_click_item != item):
-                    # dpn't allow output to output or input to input
+                    # don't allow output to output or input to input
                     if (self.held_click_item.socket_widget in self.held_click_item.socket_widget.node_widget.inputs) and (item.socket_widget in item.socket_widget.node_widget.inputs):
                         return
                     elif (self.held_click_item.socket_widget in self.held_click_item.socket_widget.node_widget.outputs) and (item.socket_widget in item.socket_widget.node_widget.outputs):
                         return
                     else:
-                        EdgeWidget(self.graphics_scene.scene, self.held_click_item.socket_widget, item.socket_widget)
+                        # only allow same socket types
+                        if self.held_click_item.socket_widget.socket_color is item.socket_widget.socket_color:
+                            EdgeWidget(self.graphics_scene.scene, self.held_click_item.socket_widget, item.socket_widget)
+                        else:
+                            return
                 return
         self.held_click_item = None
 
@@ -167,6 +193,8 @@ class GraphicsView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
+        self.pos_x = event.pos().x()
+        self.pos_y = event.pos().y()
         if self.mode == self.MODE_EDGE_DRAG:
             pos = self.mapToScene(event.pos())
             if self.temp_edge:
@@ -204,6 +232,7 @@ class GraphicsNode(QGraphicsItem):
     def __init__(self, node_widget, parent=None):
         super().__init__(parent)
         self.node_widget = node_widget
+        self._title = node_widget.title
         self._title_color = Qt.white
         self._title_font = QFont("Ubuntu", 10)
 
@@ -220,7 +249,7 @@ class GraphicsNode(QGraphicsItem):
         self._brush_background = QBrush(QColor("#E3212121"))
 
         self._init_title()
-        self.title = node_widget.title
+        self.set_title(node_widget.title)
 
         self._init_sockets()
 
@@ -235,8 +264,7 @@ class GraphicsNode(QGraphicsItem):
     def title(self):
         return self._title
 
-    @title.setter
-    def title(self, title):
+    def set_title(self, title):
         self._title = title
         self.title_item.setPlainText(self._title)
 
@@ -379,6 +407,72 @@ class GraphicsEdge(QGraphicsPathItem):
 
 
 
+class NodeSearch(QWidget):
+    def __init__(self, x, y, scene, w=200, h=150, parent=None):
+        super().__init__(parent)
+        self.scene = scene
+
+        self.setFixedWidth(w)
+        self.setFixedHeight(h)
+        self.setGeometry(x, y, w, h)
+
+        self.main_layout = QVBoxLayout()
+        self.setLayout(self.main_layout)
+
+        self.search_bar = SearchBar(self)
+        self.list_widget = QListWidget(self)
+        self.list_widget.addItems(nodes.get_nodes().keys())
+
+        self.main_layout.addWidget(self.search_bar)
+        self.main_layout.addWidget(self.list_widget)
+
+        self.list_widget.itemDoubleClicked.connect(self.create_node)
+        self.search_bar.textChanged.connect(self.filter_nodes)
+
+        self.list_widget.setFocusProxy(self)
+        self.setFocusProxy(self.search_bar)
+        self.search_bar.setFocus(True)
+
+        self.show()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        if not self.hasFocus():
+            self.deleteLater()
+
+    def create_node(self, item):
+        node = nodes.create_node(item.text())
+        NodeWidget(node, self.scene)
+        self.deleteLater()
+
+    def filter_nodes(self):
+        text = self.search_bar.text()
+        for x in range(self.list_widget.count()):
+            item = self.list_widget.item(x)
+            if text in item.text():
+                item.setHidden(False)
+            else:
+                item.setHidden(True)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Up:
+            self.list_widget.setCurrentRow(max(self.list_widget.currentRow() - 1, 0))
+        if event.key() == Qt.Key_Down:
+            self.list_widget.setCurrentRow(min(self.list_widget.currentRow() + 1, self.list_widget.count()))
+        if event.key() == Qt.Key_Return:
+            self.create_node(self.list_widget.item(self.list_widget.currentRow()))
+        if event.key() == Qt.Key_Tab:
+            self.list_widget.setCurrentRow(min(self.list_widget.currentRow() + 1, self.list_widget.count()))
+        if event.key() == Qt.Key_Escape:
+            self.deleteLater()
+
+
+class SearchBar(QLineEdit):
+    def focusOutEvent(self, widget):
+        super().focusOutEvent(widget)
+        self.parent().deleteLater()
+
+
 LEFT_TOP = 1
 LEFT_BOTTOM = 2
 RIGHT_TOP = 3
@@ -388,6 +482,7 @@ class NodeWidget:
         self.scene = scene
         self.node = node
         self.title = node.name.get()
+        self.node.widget = self
 
         self.graphics_node = GraphicsNode(self)
 
@@ -426,6 +521,14 @@ class NodeWidget:
             if socket.has_edge():
                 socket.edge.update_positions()
 
+    def remove(self):
+        for socket in (self.inputs + self.outputs):
+            if socket.has_edge():
+                socket.edge.remove()
+        self.scene.graphics_scene.removeItem(self.graphics_node)
+        self.graphics_node = None
+        self.scene.remove_node(self)
+
 class SocketWidget:
     def __init__(self, node_widget, attr, index=0, position=LEFT_TOP):
         self.node_widget = node_widget
@@ -463,10 +566,11 @@ class SocketWidget:
         return True if self.edge else False
 
 class EdgeWidget:
-    def __init__(self, scene, start_socket, end_socket):
+    def __init__(self, scene, start_socket, end_socket, is_temp=False):
         self.scene = scene
         self.start_socket = start_socket
         self.end_socket = end_socket
+        self.is_temp = is_temp
 
         self.start_socket.set_connected_edge(self)
         if self.end_socket:
@@ -478,6 +582,9 @@ class EdgeWidget:
         self.scene.graphics_scene.addItem(self.graphics_edge)
 
         self.scene.add_edge(self)
+
+        if not self.is_temp:
+            self.end_socket.attribute.connect(self.start_socket.attribute)
 
     def update_positions(self):
         source_pos = self.start_socket.get_socket_position()
@@ -502,8 +609,9 @@ class EdgeWidget:
         self.end_socket = None
 
     def remove(self):
+        if not self.is_temp:
+            self.end_socket.attribute.disconnect()
         self.remove_from_socket()
         self.scene.graphics_scene.removeItem(self.graphics_edge)
         self.graphics_edge = None
         self.scene.remove_edge(self)
-
